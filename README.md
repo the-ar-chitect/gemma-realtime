@@ -57,17 +57,14 @@ litert-lm download litert-community/gemma-4-E2B-it-litert-lm
 
 This downloads `gemma-4-E2B-it.litertlm`. Note the path — you'll need it next.
 
-### 3. (Linux only) Download TTS models
+> **Linux only:** You also need the TTS model files. On macOS these are downloaded automatically.
+> ```bash
+> cd src
+> curl -LO https://github.com/hexgrad/Kokoro-82M/releases/download/v1.0/kokoro-v1.0.onnx
+> curl -LO https://github.com/hexgrad/Kokoro-82M/releases/download/v1.0/voices-v1.0.bin
+> ```
 
-On macOS, TTS models are downloaded automatically via `mlx-audio`. On Linux, download manually:
-
-```bash
-cd src
-curl -LO https://github.com/hexgrad/Kokoro-82M/releases/download/v1.0/kokoro-v1.0.onnx
-curl -LO https://github.com/hexgrad/Kokoro-82M/releases/download/v1.0/voices-v1.0.bin
-```
-
-### 4. Run
+### 3. Run
 
 ```bash
 cd src
@@ -94,17 +91,19 @@ See [`.env.example`](.env.example) for a template.
 | Text-to-speech (1-3 sentences) | ~0.3-0.7s |
 | **Total end-to-end** | **~2.5-3.0s** |
 
-Decode speed: ~83 tokens/sec (GPU). First inference is slower (~2.4s) due to WebGPU shader compilation; subsequent turns use cached shaders.
+Decode speed: ~83 tokens/sec (GPU).
 
 ## Project structure
 
 ```
 src/
-├── server.py       # FastAPI WebSocket server + Gemma 4 inference
-├── tts.py          # Platform-aware TTS (MLX on Mac, ONNX on Linux)
-├── index.html      # Frontend UI (VAD, camera, audio playback)
-├── bench.py        # End-to-end WebSocket benchmark
-└── benchmark_tts.py # TTS backend comparison
+├── server.py          # FastAPI WebSocket server + Gemma 4 inference
+├── tts.py             # Platform-aware TTS (MLX on Mac, ONNX on Linux)
+├── index.html         # Frontend UI (VAD, camera, audio playback)
+└── pyproject.toml     # Dependencies
+benchmarks/
+├── bench.py           # End-to-end WebSocket benchmark
+└── benchmark_tts.py   # TTS backend comparison
 ```
 
 ## Acknowledgments

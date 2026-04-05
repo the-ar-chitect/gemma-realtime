@@ -28,7 +28,7 @@ def benchmark_kokoro_onnx():
     """Benchmark kokoro-onnx (ONNX Runtime, CPU)."""
     import kokoro_onnx
 
-    tts_dir = Path(__file__).parent
+    tts_dir = Path(__file__).parent.parent / "src"
     model_path = str(tts_dir / "kokoro-v1.0.onnx")
     voices_path = str(tts_dir / "voices-v1.0.bin")
 
