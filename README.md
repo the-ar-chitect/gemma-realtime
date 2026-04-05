@@ -79,12 +79,13 @@ Decode speed: ~83 tokens/sec on GPU (Apple M3 Pro).
 
 ```
 src/
-├── server.py          # FastAPI WebSocket server + Gemma 4 inference
-├── tts.py             # Platform-aware TTS (MLX on Mac, ONNX on Linux)
-├── index.html         # Frontend UI (VAD, camera, audio playback)
-├── bench.py           # End-to-end WebSocket benchmark
-├── benchmark_tts.py   # TTS backend comparison
-└── pyproject.toml     # Dependencies
+├── server.py              # FastAPI WebSocket server + Gemma 4 inference
+├── tts.py                 # Platform-aware TTS (MLX on Mac, ONNX on Linux)
+├── index.html             # Frontend UI (VAD, camera, audio playback)
+├── pyproject.toml         # Dependencies
+└── benchmarks/
+    ├── bench.py           # End-to-end WebSocket benchmark
+    └── benchmark_tts.py   # TTS backend comparison
 ```
 
 ## Acknowledgments

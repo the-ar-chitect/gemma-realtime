@@ -1,7 +1,7 @@
 """End-to-end benchmark — connects to the running server over WebSocket.
 
 Start the server first:  uv run python server.py
-Then run:                uv run python bench.py
+Then run:                uv run python benchmarks/bench.py
 
 Measures real latencies including network, serialization, and all server overhead.
 """
