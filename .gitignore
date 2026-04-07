@@ -20,3 +20,6 @@ default.profraw
 # IDE
 .idea/
 .vscode/
+
+# OUR
+DOCS/INTERNAL

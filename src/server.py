@@ -14,6 +14,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 import tts
 
@@ -66,6 +67,7 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=Path(__file__).parent), name="static")
 
 
 def split_sentences(text: str) -> list[str]:
