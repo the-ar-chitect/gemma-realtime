@@ -1,15 +1,22 @@
 const $ = id => document.getElementById(id);
 const video = $('video'), cameraToggle = $('cameraToggle');
+const micToggle = $('micToggle'), connectToggle = $('connectToggle');
 const messagesDiv = $('messages'), statusEl = $('status');
 const stateDot = $('stateDot'), stateText = $('stateText');
 const viewportWrap = $('viewportWrap');
 const waveformCanvas = $('waveform');
 const waveformCtx = waveformCanvas.getContext('2d');
+const maxTurnsInput = $('maxTurns');
+const contextInfo = $('contextInfo');
+const toolLog = $('toolLog');
+const turnCounter = $('turnCounter');
 
 let ws, mediaStream, myvad;
 let cameraEnabled = true;
+let micEnabled = true;
+let connected = false;       // Whether we want to be connected
 let audioCtx, currentSource;
-let state = 'loading';
+let state = 'idle';
 let ignoreIncomingAudio = false;
 
 // Streaming audio playback state
@@ -34,8 +41,8 @@ function initWaveformCanvas() {
 }
 
 function getStateColor() {
-  const colors = { listening: '#4ade80', processing: '#f59e0b', speaking: '#818cf8', loading: '#3a3d46' };
-  return colors[state] || colors.loading;
+  const colors = { listening: '#4ade80', processing: '#f59e0b', speaking: '#818cf8', loading: '#3a3d46', idle: '#3a3d46' };
+  return colors[state] || colors.idle;
 }
 
 function drawWaveform() {
@@ -109,11 +116,11 @@ function setState(newState) {
 
   // Update state indicator
   stateDot.className = `dot ${newState}`;
-  const labels = { loading: 'Loading...', listening: 'Listening', processing: 'Thinking...', speaking: 'Speaking' };
+  const labels = { idle: 'Idle', loading: 'Loading...', listening: 'Listening', processing: 'Thinking...', speaking: 'Speaking' };
   stateText.textContent = labels[newState] || newState;
 
   // Update viewport glow class
-  viewportWrap.className = `viewport-wrap ${newState}`;
+  viewportWrap.className = `viewport-wrap ${newState === 'idle' ? 'loading' : newState}`;
 
   // Reset inline styles from speaking glow
   if (newState !== 'speaking') {
@@ -127,8 +134,9 @@ function setState(newState) {
     processing: ['#f59e0b', 'rgba(245,158,11,0.12)'],
     speaking: ['#818cf8', 'rgba(129,140,248,0.12)'],
     loading: ['#3a3d46', 'rgba(58,61,70,0.12)'],
+    idle: ['#3a3d46', 'rgba(58,61,70,0.12)'],
   };
-  const [glow, glowDim] = stateVars[newState] || stateVars.loading;
+  const [glow, glowDim] = stateVars[newState] || stateVars.idle;
   document.documentElement.style.setProperty('--glow', glow);
   document.documentElement.style.setProperty('--glow-dim', glowDim);
 
@@ -152,19 +160,36 @@ function setState(newState) {
 }
 
 // ── WebSocket ──
+let reconnectTimer = null;
+
 function connect() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  connected = true;
+  connectToggle.textContent = 'Disconnect';
+  connectToggle.classList.add('danger');
+  connectToggle.classList.remove('active');
+  setState('loading');
+
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.onopen = () => {
     setStatus('connected', 'Connected');
-    if (state !== 'loading') setState('listening');
+    setState('listening');
+    if (myvad && micEnabled) myvad.start();
   };
   ws.onclose = () => {
     setStatus('disconnected', 'Disconnected');
-    setTimeout(connect, 2000);
+    if (connected) {
+      // Unexpected close — reconnect
+      reconnectTimer = setTimeout(connect, 2000);
+    } else {
+      setState('idle');
+    }
   };
   ws.onmessage = ({ data }) => {
     const msg = JSON.parse(data);
-    if (msg.type === 'text') {
+    if (msg.type === 'tool_call') {
+      showToolCall(msg.tool, msg.reason);
+    } else if (msg.type === 'text') {
       if (msg.transcription) {
         const userMsgs = messagesDiv.querySelectorAll('.msg.user');
         const lastUserMsg = userMsgs[userMsgs.length - 1];
@@ -173,7 +198,14 @@ function connect() {
           lastUserMsg.innerHTML = `${msg.transcription}${meta ? meta.outerHTML : ''}`;
         }
       }
-      addMessage('assistant', msg.text, `LLM ${msg.llm_time}s`);
+      let metaText = `LLM ${msg.llm_time}s`;
+      if (msg.tools_called && msg.tools_called.length) {
+        metaText += ` · Tools: ${msg.tools_called.join(', ')}`;
+      }
+      addMessage('assistant', msg.text, metaText);
+      if (msg.turn != null) {
+        turnCounter.textContent = `Turn ${msg.turn}/${msg.max_turns}`;
+      }
     } else if (msg.type === 'audio_start') {
       if (ignoreIncomingAudio) return;
       streamSampleRate = msg.sample_rate || 24000;
@@ -193,6 +225,35 @@ function connect() {
       if (meta) meta.textContent += ` · TTS ${msg.tts_time}s`;
     }
   };
+}
+
+function disconnect() {
+  connected = false;
+  connectToggle.textContent = 'Connect';
+  connectToggle.classList.remove('danger');
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (myvad) myvad.pause();
+  stopPlayback();
+  if (ws) {
+    ws.onclose = null; // Prevent reconnect
+    ws.close();
+    ws = null;
+  }
+  setStatus('disconnected', 'Disconnected');
+  setState('idle');
+}
+
+// ── Tool Call Display ──
+function showToolCall(toolNum, reason) {
+  toolLog.hidden = false;
+  const tag = document.createElement('div');
+  tag.className = 'tool-tag';
+  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  tag.innerHTML = `Tool ${toolNum} <span class="tool-time">${now}</span>`;
+  tag.title = reason;
+  toolLog.appendChild(tag);
+  // Keep max 20 tags
+  while (toolLog.children.length > 20) toolLog.removeChild(toolLog.firstChild);
 }
 
 function setStatus(cls, text) { statusEl.className = `status-pill ${cls}`; statusEl.textContent = text; }
@@ -249,7 +310,7 @@ function handleSpeechStart() {
 }
 
 function handleSpeechEnd(audio) {
-  if (state !== 'listening') return;
+  if (state !== 'listening' || !micEnabled) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
   const wavBase64 = float32ToWavBase64(audio);
@@ -367,15 +428,36 @@ cameraToggle.addEventListener('click', () => {
   video.style.opacity = cameraEnabled ? 1 : 0.3;
 });
 
+micToggle.addEventListener('click', () => {
+  micEnabled = !micEnabled;
+  micToggle.classList.toggle('active', micEnabled);
+  micToggle.textContent = micEnabled ? 'Mic On' : 'Mic Off';
+  if (myvad) {
+    if (micEnabled && connected) myvad.start();
+    else myvad.pause();
+  }
+});
+
+connectToggle.addEventListener('click', () => {
+  if (connected) disconnect();
+  else connect();
+});
+
 // ── Init ──
 async function init() {
   initWaveformCanvas();
   window.addEventListener('resize', initWaveformCanvas);
 
   await startCamera();
-  connect();
 
-  // Initialize VAD with shared mic stream
+  // Fetch server config
+  try {
+    const cfg = await fetch('/config').then(r => r.json());
+    maxTurnsInput.value = cfg.max_history_turns;
+    contextInfo.textContent = `${Math.round(cfg.context_window / 1024)}K ctx`;
+  } catch {}
+
+  // Initialize VAD with shared mic stream (but don't start until connected)
   myvad = await vad.MicVAD.new({
     getStream: async () => new MediaStream(mediaStream.getAudioTracks()),
     positiveSpeechThreshold: 0.5,
@@ -390,10 +472,10 @@ async function init() {
     baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/",
   });
 
-  myvad.start();
+  // Don't auto-connect — wait for user to click Connect
+  // myvad stays paused until connect()
 
   // Init audio context on first user gesture for mic visualizer
-  // (browsers require user interaction to create AudioContext)
   const initAudio = () => {
     ensureAudioCtx();
     if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -402,15 +484,14 @@ async function init() {
   };
   document.addEventListener('click', initAudio);
   document.addEventListener('keydown', initAudio);
-  // Also try immediately (may work if page had prior interaction)
   ensureAudioCtx();
 
-  setState('listening');
+  setState('idle');
 
   // Start waveform loop
   drawWaveform();
 
-  console.log('VAD initialized and listening');
+  console.log('Parlor ready — click Connect to start');
 }
 
 init();

@@ -36,8 +36,15 @@ SYSTEM_PROMPT = (
     "You are a friendly, conversational AI assistant. The user is talking to you "
     "through a microphone and showing you their camera. "
     "You MUST always use the respond_to_user tool to reply. "
-    "First transcribe exactly what the user said, then write your response."
+    "First transcribe exactly what the user said, then write your response. "
+    "You also have test tools numbered 1 through 10 available. "
+    "When the user asks you to call a specific tool by number, call that tool."
 )
+
+# Max conversation turns to keep (controls effective context usage).
+# Gemma 4 E2B supports 128K tokens; each turn with image+audio is ~300-500 tokens.
+# Default 20 turns ≈ 6K-10K tokens of history.
+MAX_HISTORY_TURNS = int(os.environ.get("MAX_HISTORY_TURNS", "20"))
 
 SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
 
@@ -81,12 +88,22 @@ async def root():
     return HTMLResponse(content=(Path(__file__).parent / "index.html").read_text())
 
 
+@app.get("/config")
+async def get_config():
+    return {
+        "max_history_turns": MAX_HISTORY_TURNS,
+        "model": HF_FILENAME,
+        "context_window": 131072,  # Gemma 4 E2B: 128K tokens
+    }
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
 
     # Per-connection tool state captured via closure
     tool_result = {}
+    tool_calls = []  # Track test tool invocations
 
     def respond_to_user(transcription: str, response: str) -> str:
         """Respond to the user's voice message.
@@ -99,11 +116,31 @@ async def websocket_endpoint(ws: WebSocket):
         tool_result["response"] = response
         return "OK"
 
+    # Test tools 1-10: simple tools the LLM can call to verify tool-calling works
+    def _make_test_tool(n: int):
+        def tool_fn(reason: str) -> str:
+            f"""Test tool {n}. Call this when the user asks you to call tool {n}.
+
+            Args:
+                reason: Brief explanation of why this tool was called.
+            """
+            tool_calls.append({"tool": n, "reason": reason})
+            return f"Tool {n} executed successfully."
+        tool_fn.__name__ = f"test_tool_{n}"
+        tool_fn.__doc__ = (
+            f"Test tool {n}. Call this when the user asks you to call tool {n}.\n\n"
+            f"Args:\n    reason: Brief explanation of why this tool was called."
+        )
+        return tool_fn
+
+    test_tools = [_make_test_tool(i) for i in range(1, 11)]
+
     conversation = engine.create_conversation(
         messages=[{"role": "system", "content": SYSTEM_PROMPT}],
-        tools=[respond_to_user],
+        tools=[respond_to_user] + test_tools,
     )
     conversation.__enter__()
+    turn_count = 0
 
     interrupted = asyncio.Event()
     msg_queue = asyncio.Queue()
@@ -150,10 +187,21 @@ async def websocket_endpoint(ws: WebSocket):
             # LLM inference
             t0 = time.time()
             tool_result.clear()
+            tool_calls.clear()
             response = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: conversation.send_message({"role": "user", "content": content})
             )
             llm_time = time.time() - t0
+            turn_count += 1
+
+            # Send test tool call notifications to frontend
+            for tc in tool_calls:
+                await ws.send_text(json.dumps({
+                    "type": "tool_call",
+                    "tool": tc["tool"],
+                    "reason": tc["reason"],
+                }))
+                print(f"Tool {tc['tool']} called: {tc['reason']}")
 
             # Extract response from tool call or fallback to raw text
             if tool_result:
@@ -170,9 +218,16 @@ async def websocket_endpoint(ws: WebSocket):
                 print("Interrupted after LLM, skipping response")
                 continue
 
-            reply = {"type": "text", "text": text_response, "llm_time": round(llm_time, 2)}
+            reply = {
+                "type": "text", "text": text_response,
+                "llm_time": round(llm_time, 2),
+                "turn": turn_count,
+                "max_turns": MAX_HISTORY_TURNS,
+            }
             if transcription:
                 reply["transcription"] = transcription
+            if tool_calls:
+                reply["tools_called"] = [tc["tool"] for tc in tool_calls]
             await ws.send_text(json.dumps(reply))
 
             if interrupted.is_set():

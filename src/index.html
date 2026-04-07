@@ -21,6 +21,23 @@
 </header>
 
 <div class="portal-stack">
+  <!-- Settings bar -->
+  <div class="settings-bar">
+    <button id="connectToggle" class="ctrl-btn">Connect</button>
+    <button id="micToggle" class="ctrl-btn active">Mic On</button>
+    <button id="cameraToggle" class="ctrl-btn active">Camera On</button>
+    <div class="setting-group">
+      <label for="maxTurns" class="setting-label">History turns</label>
+      <input id="maxTurns" type="number" class="setting-input" value="20" min="1" max="200">
+    </div>
+    <div class="setting-group">
+      <span id="contextInfo" class="setting-label">128K ctx</span>
+    </div>
+  </div>
+
+  <!-- Tool call log -->
+  <div id="toolLog" class="tool-log" hidden></div>
+
   <!-- Webcam viewport with glow layers -->
   <div id="viewportWrap" class="viewport-wrap loading">
     <div class="viewport-glow"></div>
@@ -37,11 +54,11 @@
 
   <!-- Controls -->
   <div class="controls">
-    <button id="cameraToggle" class="ctrl-btn active">Camera On</button>
     <div class="state-indicator">
       <div id="stateDot" class="dot loading"></div>
-      <span id="stateText">Loading...</span>
+      <span id="stateText">Idle</span>
     </div>
+    <span id="turnCounter" class="turn-counter"></span>
     <span class="on-device-pill">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="2"/><path d="M5 4V3a3 3 0 0 1 6 0v1"/></svg>
       On-device
