@@ -18,8 +18,25 @@ from fastapi.staticfiles import StaticFiles
 
 import tts
 
-HF_REPO = "litert-community/gemma-4-E2B-it-litert-lm"
-HF_FILENAME = "gemma-4-E2B-it.litertlm"
+# Model variant: "E2B" (2.6 GB, lighter) or "E4B" (3.65 GB, stronger).
+MODEL_VARIANT = os.environ.get("MODEL_VARIANT", "E2B").upper()
+
+_MODEL_VARIANTS = {
+    "E2B": {
+        "repo": "litert-community/gemma-4-E2B-it-litert-lm",
+        "filename": "gemma-4-E2B-it.litertlm",
+    },
+    "E4B": {
+        "repo": "litert-community/gemma-4-E4B-it-litert-lm",
+        "filename": "gemma-4-E4B-it.litertlm",
+    },
+}
+
+if MODEL_VARIANT not in _MODEL_VARIANTS:
+    raise ValueError(f"Unknown MODEL_VARIANT={MODEL_VARIANT!r}. Use 'E2B' or 'E4B'.")
+
+HF_REPO = _MODEL_VARIANTS[MODEL_VARIANT]["repo"]
+HF_FILENAME = _MODEL_VARIANTS[MODEL_VARIANT]["filename"]
 
 
 def resolve_model_path() -> str:
@@ -42,12 +59,12 @@ SYSTEM_PROMPT = (
 )
 
 # Max conversation turns to keep (controls effective context usage).
-# Gemma 4 E2B supports 128K tokens; each turn with image+audio is ~300-500 tokens.
+# Gemma 4 E2B/E4B supports 128K tokens; each turn with image+audio is ~300-500 tokens.
 # Default 20 turns ≈ 6K-10K tokens of history.
 MAX_HISTORY_TURNS = int(os.environ.get("MAX_HISTORY_TURNS", "20"))
 
-# Number of concurrent sessions (each needs its own engine instance, ~2.6 GB VRAM).
-MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "5"))
+# Number of concurrent sessions (each needs its own engine instance, ~2.6-3.7 GB VRAM).
+MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "1"))
 
 SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
 
@@ -102,7 +119,8 @@ async def get_config():
         "active_sessions": active_sessions,
         "available_sessions": engine_pool.qsize(),
         "model": HF_FILENAME,
-        "context_window": 131072,  # Gemma 4 E2B: 128K tokens
+        "model_variant": MODEL_VARIANT,
+        "context_window": 131072,  # Gemma 4: 128K tokens
     }
 
 
