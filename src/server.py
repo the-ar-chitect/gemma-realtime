@@ -21,6 +21,22 @@ import tts
 # Model variant: "E2B" (2.6 GB, lighter) or "E4B" (3.65 GB, stronger).
 MODEL_VARIANT = os.environ.get("MODEL_VARIANT", "E2B").upper()
 
+# Max conversation turns to keep (controls effective context usage).
+# Gemma 4 E2B/E4B supports 128K tokens; each turn with image+audio is ~300-500 tokens.
+# Default 20 turns ≈ 6K-10K tokens of history.
+MAX_HISTORY_TURNS = int(os.environ.get("MAX_HISTORY_TURNS", "20"))
+
+# Number of concurrent sessions (each needs its own engine instance, ~2.6-3.7 GB VRAM).
+MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "1"))
+
+# Context window (tokens). Gemma 4 E2B/E4B supports up to 128K.
+CONTEXT_WINDOW = int(os.environ.get("CONTEXT_WINDOW", "131072"))
+
+# Feature toggles — disable individual input modalities from the server.
+ENABLE_AUDIO = os.environ.get("ENABLE_AUDIO", "true").lower() in ("true", "1", "yes")
+ENABLE_VIDEO = os.environ.get("ENABLE_VIDEO", "true").lower() in ("true", "1", "yes")
+ENABLE_CHAT  = os.environ.get("ENABLE_CHAT", "true").lower() in ("true", "1", "yes")
+
 _MODEL_VARIANTS = {
     "E2B": {
         "repo": "litert-community/gemma-4-E2B-it-litert-lm",
@@ -49,22 +65,29 @@ def resolve_model_path() -> str:
 
 
 MODEL_PATH = resolve_model_path()
-SYSTEM_PROMPT = (
-    "You are a friendly, conversational AI assistant. The user is talking to you "
-    "through a microphone and showing you their camera. "
-    "You MUST always use the respond_to_user tool to reply. "
-    "First transcribe exactly what the user said, then write your response. "
-    "You also have test tools numbered 1 through 10 available. "
-    "When the user asks you to call a specific tool by number, call that tool."
-)
 
-# Max conversation turns to keep (controls effective context usage).
-# Gemma 4 E2B/E4B supports 128K tokens; each turn with image+audio is ~300-500 tokens.
-# Default 20 turns ≈ 6K-10K tokens of history.
-MAX_HISTORY_TURNS = int(os.environ.get("MAX_HISTORY_TURNS", "20"))
+def _build_system_prompt() -> str:
+    """Build system prompt based on enabled modalities."""
+    parts = ["You are a friendly, conversational AI assistant."]
+    if ENABLE_AUDIO and ENABLE_VIDEO:
+        parts.append("The user is talking to you through a microphone and showing you their camera.")
+    elif ENABLE_AUDIO:
+        parts.append("The user is talking to you through a microphone.")
+    elif ENABLE_VIDEO:
+        parts.append("The user is showing you their camera and chatting via text.")
+    else:
+        parts.append("The user is chatting with you via text.")
+    parts.append(
+        "You MUST always use the respond_to_user tool to reply. "
+        "First transcribe exactly what the user said (or restate their text), then write your response."
+    )
+    parts.append(
+        "You also have test tools numbered 1 through 10 available. "
+        "When the user asks you to call a specific tool by number, call that tool."
+    )
+    return " ".join(parts)
 
-# Number of concurrent sessions (each needs its own engine instance, ~2.6-3.7 GB VRAM).
-MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "1"))
+SYSTEM_PROMPT = _build_system_prompt()
 
 SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
 
@@ -120,7 +143,10 @@ async def get_config():
         "available_sessions": engine_pool.qsize(),
         "model": HF_FILENAME,
         "model_variant": MODEL_VARIANT,
-        "context_window": 131072,  # Gemma 4: 128K tokens
+        "context_window": CONTEXT_WINDOW,
+        "enable_audio": ENABLE_AUDIO,
+        "enable_video": ENABLE_VIDEO,
+        "enable_chat": ENABLE_CHAT,
     }
 
 
@@ -224,6 +250,8 @@ async def _run_session(ws: WebSocket, engine):
                 content.append({"type": "text", "text": "The user just spoke to you (audio) while showing their camera (image). Respond to what they said, referencing what you see if relevant."})
             elif msg.get("audio"):
                 content.append({"type": "text", "text": "The user just spoke to you. Respond to what they said."})
+            elif msg.get("image") and msg.get("text"):
+                content.append({"type": "text", "text": f"The user typed: {msg['text']}\nThey are also showing their camera. Respond to what they said, referencing what you see if relevant."})
             elif msg.get("image"):
                 content.append({"type": "text", "text": "The user is showing you their camera. Describe what you see."})
             else:

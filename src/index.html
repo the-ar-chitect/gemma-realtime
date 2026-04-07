@@ -16,7 +16,7 @@
     <div class="logo-mark"></div>
     <h1>Parlor</h1>
   </div>
-  <span class="model-label">Gemma 4 E2B</span>
+  <span id="modelLabel" class="model-label">Gemma 4</span>
   <div id="status" class="status-pill disconnected">Disconnected</div>
 </header>
 
@@ -66,6 +66,12 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="12" height="9" rx="2"/><path d="M5 4V3a3 3 0 0 1 6 0v1"/></svg>
       On-device
     </span>
+  </div>
+
+  <!-- Chat input -->
+  <div id="chatBar" class="chat-bar" hidden>
+    <input id="chatInput" type="text" class="chat-input" placeholder="Type a message..." autocomplete="off">
+    <button id="chatSend" class="ctrl-btn chat-send">Send</button>
   </div>
 </div>
 

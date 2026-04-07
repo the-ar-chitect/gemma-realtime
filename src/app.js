@@ -10,6 +10,15 @@ const maxTurnsInput = $('maxTurns');
 const contextInfo = $('contextInfo');
 const toolLog = $('toolLog');
 const turnCounter = $('turnCounter');
+const chatBar = $('chatBar');
+const chatInput = $('chatInput');
+const chatSend = $('chatSend');
+const modelLabel = $('modelLabel');
+
+// Server-driven feature flags (updated from /config)
+let enableAudio = true;
+let enableVideo = true;
+let enableChat = true;
 
 let ws, mediaStream, myvad;
 let cameraEnabled = true;
@@ -284,7 +293,7 @@ async function startCamera() {
 }
 
 function captureFrame() {
-  if (!cameraEnabled || !video.videoWidth) return null;
+  if (!enableVideo || !cameraEnabled || !video.videoWidth) return null;
   const canvas = document.createElement('canvas');
   const scale = 320 / video.videoWidth;
   canvas.width = 320; canvas.height = video.videoHeight * scale;
@@ -314,7 +323,7 @@ function handleSpeechStart() {
 }
 
 function handleSpeechEnd(audio) {
-  if (state !== 'listening' || !micEnabled) return;
+  if (!enableAudio || state !== 'listening' || !micEnabled) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
   const wavBase64 = float32ToWavBase64(audio);
@@ -447,6 +456,29 @@ connectToggle.addEventListener('click', () => {
   else connect();
 });
 
+// ── Chat Input ──
+function sendChat() {
+  const text = chatInput.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (state === 'processing' || state === 'loading') return;
+
+  chatInput.value = '';
+  setState('processing');
+  setStatus('processing', 'Processing');
+
+  const imageBase64 = (enableVideo && cameraEnabled) ? captureFrame() : null;
+  addMessage('user', text, imageBase64 ? 'with camera' : '');
+
+  const payload = { text };
+  if (imageBase64) payload.image = imageBase64;
+  ws.send(JSON.stringify(payload));
+}
+
+chatSend.addEventListener('click', sendChat);
+chatInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+
 // ── Init ──
 async function init() {
   initWaveformCanvas();
@@ -463,22 +495,43 @@ async function init() {
     if (si && cfg.max_sessions) {
       si.textContent = `${cfg.available_sessions}/${cfg.max_sessions} slots`;
     }
+    if (modelLabel && cfg.model_variant) {
+      modelLabel.textContent = `Gemma 4 ${cfg.model_variant}`;
+    }
+
+    // Apply feature toggles from server
+    enableAudio = cfg.enable_audio !== false;
+    enableVideo = cfg.enable_video !== false;
+    enableChat  = cfg.enable_chat !== false;
+
+    if (!enableAudio) {
+      micToggle.style.display = 'none';
+    }
+    if (!enableVideo) {
+      cameraToggle.style.display = 'none';
+      video.style.display = 'none';
+    }
+    if (enableChat) {
+      chatBar.hidden = false;
+    }
   } catch {}
 
   // Initialize VAD with shared mic stream (but don't start until connected)
-  myvad = await vad.MicVAD.new({
-    getStream: async () => new MediaStream(mediaStream.getAudioTracks()),
-    positiveSpeechThreshold: 0.5,
-    negativeSpeechThreshold: 0.25,
-    redemptionMs: 600,
-    minSpeechMs: 300,
-    preSpeechPadMs: 300,
-    onSpeechStart: handleSpeechStart,
-    onSpeechEnd: handleSpeechEnd,
-    onVADMisfire: () => { console.log('VAD misfire (too short)'); },
-    onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
-    baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/",
-  });
+  if (enableAudio && mediaStream && mediaStream.getAudioTracks().length) {
+    myvad = await vad.MicVAD.new({
+      getStream: async () => new MediaStream(mediaStream.getAudioTracks()),
+      positiveSpeechThreshold: 0.5,
+      negativeSpeechThreshold: 0.25,
+      redemptionMs: 600,
+      minSpeechMs: 300,
+      preSpeechPadMs: 300,
+      onSpeechStart: handleSpeechStart,
+      onSpeechEnd: handleSpeechEnd,
+      onVADMisfire: () => { console.log('VAD misfire (too short)'); },
+      onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
+      baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/",
+    });
+  }
 
   // Don't auto-connect — wait for user to click Connect
   // myvad stays paused until connect()
