@@ -46,23 +46,29 @@ SYSTEM_PROMPT = (
 # Default 20 turns ≈ 6K-10K tokens of history.
 MAX_HISTORY_TURNS = int(os.environ.get("MAX_HISTORY_TURNS", "20"))
 
+# Number of concurrent sessions (each needs its own engine instance, ~2.6 GB VRAM).
+MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "5"))
+
 SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
 
-engine = None
+engine_pool: asyncio.Queue = asyncio.Queue()
+active_sessions = 0  # track how many engines are currently checked-out
 tts_backend = None
 
 
 def load_models():
-    global engine, tts_backend
-    print(f"Loading Gemma 4 E2B from {MODEL_PATH}...")
-    engine = litert_lm.Engine(
-        MODEL_PATH,
-        backend=litert_lm.Backend.GPU,
-        vision_backend=litert_lm.Backend.GPU,
-        audio_backend=litert_lm.Backend.CPU,
-    )
-    engine.__enter__()
-    print("Engine loaded.")
+    global tts_backend
+    for i in range(MAX_SESSIONS):
+        print(f"Loading engine {i+1}/{MAX_SESSIONS} from {MODEL_PATH}...")
+        eng = litert_lm.Engine(
+            MODEL_PATH,
+            backend=litert_lm.Backend.GPU,
+            vision_backend=litert_lm.Backend.GPU,
+            audio_backend=litert_lm.Backend.CPU,
+        )
+        eng.__enter__()
+        engine_pool.put_nowait(eng)
+        print(f"Engine {i+1}/{MAX_SESSIONS} loaded.")
 
     tts_backend = tts.load()
 
@@ -92,6 +98,9 @@ async def root():
 async def get_config():
     return {
         "max_history_turns": MAX_HISTORY_TURNS,
+        "max_sessions": MAX_SESSIONS,
+        "active_sessions": active_sessions,
+        "available_sessions": engine_pool.qsize(),
         "model": HF_FILENAME,
         "context_window": 131072,  # Gemma 4 E2B: 128K tokens
     }
@@ -99,8 +108,29 @@ async def get_config():
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    global active_sessions
     await ws.accept()
 
+    # Try to check out an engine from the pool (non-blocking).
+    try:
+        eng = engine_pool.get_nowait()
+    except asyncio.QueueEmpty:
+        await ws.send_text(json.dumps({
+            "type": "error",
+            "error": f"All {MAX_SESSIONS} session(s) are in use. Try again shortly.",
+        }))
+        await ws.close(code=1008, reason="Session busy")
+        return
+
+    active_sessions += 1
+    try:
+        await _run_session(ws, eng)
+    finally:
+        active_sessions -= 1
+        engine_pool.put_nowait(eng)
+
+
+async def _run_session(ws: WebSocket, engine):
     # Per-connection tool state captured via closure
     tool_result = {}
     tool_calls = []  # Track test tool invocations
@@ -119,11 +149,7 @@ async def websocket_endpoint(ws: WebSocket):
     # Test tools 1-10: simple tools the LLM can call to verify tool-calling works
     def _make_test_tool(n: int):
         def tool_fn(reason: str) -> str:
-            f"""Test tool {n}. Call this when the user asks you to call tool {n}.
-
-            Args:
-                reason: Brief explanation of why this tool was called.
-            """
+            """Placeholder docstring (overridden below)."""
             tool_calls.append({"tool": n, "reason": reason})
             return f"Tool {n} executed successfully."
         tool_fn.__name__ = f"test_tool_{n}"
@@ -135,6 +161,7 @@ async def websocket_endpoint(ws: WebSocket):
 
     test_tools = [_make_test_tool(i) for i in range(1, 11)]
 
+    print(f"Session started (active: {active_sessions}/{MAX_SESSIONS})")
     conversation = engine.create_conversation(
         messages=[{"role": "system", "content": SYSTEM_PROMPT}],
         tools=[respond_to_user] + test_tools,
@@ -279,7 +306,7 @@ async def websocket_endpoint(ws: WebSocket):
                 }))
 
     except WebSocketDisconnect:
-        print("Client disconnected")
+        print(f"Client disconnected (active after: {active_sessions - 1}/{MAX_SESSIONS})")
     finally:
         recv_task.cancel()
         conversation.__exit__(None, None, None)

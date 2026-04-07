@@ -187,7 +187,11 @@ function connect() {
   };
   ws.onmessage = ({ data }) => {
     const msg = JSON.parse(data);
-    if (msg.type === 'tool_call') {
+    if (msg.type === 'error') {
+      addMessage('assistant', `⚠ ${msg.error}`, 'server error');
+      disconnect();
+      return;
+    } else if (msg.type === 'tool_call') {
       showToolCall(msg.tool, msg.reason);
     } else if (msg.type === 'text') {
       if (msg.transcription) {
@@ -455,6 +459,10 @@ async function init() {
     const cfg = await fetch('/config').then(r => r.json());
     maxTurnsInput.value = cfg.max_history_turns;
     contextInfo.textContent = `${Math.round(cfg.context_window / 1024)}K ctx`;
+    const si = document.getElementById('sessionInfo');
+    if (si && cfg.max_sessions) {
+      si.textContent = `${cfg.available_sessions}/${cfg.max_sessions} slots`;
+    }
   } catch {}
 
   // Initialize VAD with shared mic stream (but don't start until connected)

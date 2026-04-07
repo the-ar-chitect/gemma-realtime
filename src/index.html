@@ -28,10 +28,13 @@
     <button id="cameraToggle" class="ctrl-btn active">Camera On</button>
     <div class="setting-group">
       <label for="maxTurns" class="setting-label">History turns</label>
-      <input id="maxTurns" type="number" class="setting-input" value="20" min="1" max="200">
+      <input id="maxTurns" type="number" class="setting-input" value="20" min="1" max="200" readonly title="Set via MAX_HISTORY_TURNS env var on server">
     </div>
     <div class="setting-group">
       <span id="contextInfo" class="setting-label">128K ctx</span>
+    </div>
+    <div class="setting-group">
+      <span id="sessionInfo" class="setting-label"></span>
     </div>
   </div>
 
