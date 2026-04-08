@@ -35,6 +35,7 @@ All configuration is done via environment variables. Set them before launching t
 | `ENABLE_VIDEO` | `true` | Enable camera/vision input. Set to `false` to hide the camera. |
 | `ENABLE_CHAT` | `true` | Enable text chat input bar. Set to `false` for voice-only mode. |
 | `MODEL_PATH` | *(auto-download)* | Override with a local path to a `.litertlm` file (skips HuggingFace download). |
+| `MODEL_DIR` | *(HF cache)* | Directory to download models into. If unset, uses the default HuggingFace cache (`~/.cache/huggingface/`). |
 | `PORT` | `8000` | Server port. |
 
 **How to set them:**
@@ -83,7 +84,7 @@ uv run server.py
 
 ---
 
-### Full Step-by-Step Guide: Run Parlor on g6.xlarge (Updated for This Repo)
+### Full Step-by-Step Guide: Run Gemma Realtime on g6.xlarge (Updated for This Repo)
 
 #### 1. Launch the EC2 Instance (same as before, tiny tweak)
 - AMI: **Ubuntu Server 24.04 LTS**
@@ -120,7 +121,7 @@ nvidia-smi
 ```
 You should see the L4 GPU. (If not, `sudo ubuntu-drivers autoinstall && reboot`.)
 
-#### 3. Install uv + Clone & Run Parlor
+#### 3. Install uv + Clone & Run Gemma Realtime
 Ubuntu 24.04 already has Python 3.12 — perfect.
 
 ```bash
@@ -129,8 +130,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.cargo/env   # add to PATH
 
 # Clone the repo
-git clone https://github.com/fikrikarim/parlor.git
-cd parlor/src
+git clone https://github.com/the-ar-chitect/gemma-realtime.git
+cd gemma-realtime/src
 
 # Install dependencies (uv will pull everything, including LiteRT-LM, FastAPI, ONNX for Kokoro, etc.)
 uv sync
@@ -175,14 +176,14 @@ On the L4 you'll see **even better**: sub-2s responses, higher tokens/sec, and r
 #### Make It Production-Ready (Quick Extras)
 - **Persistent on reboot** (optional systemd service):
   ```bash
-  sudo tee /etc/systemd/system/parlor.service > /dev/null <<EOF
+  sudo tee /etc/systemd/system/gemma-realtime.service > /dev/null <<EOF
   [Unit]
-  Description=Parlor Realtime AI
+  Description=Gemma Realtime AI
   After=network.target
 
   [Service]
   User=ubuntu
-  WorkingDirectory=/home/ubuntu/parlor/src
+  WorkingDirectory=/home/ubuntu/gemma-realtime/src
   ExecStart=/home/ubuntu/.cargo/bin/uv run server.py
   Restart=always
   Environment=PATH=/home/ubuntu/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -197,9 +198,9 @@ On the L4 you'll see **even better**: sub-2s responses, higher tokens/sec, and r
   EOF
 
   sudo systemctl daemon-reload
-  sudo systemctl enable --now parlor
+  sudo systemctl enable --now gemma-realtime
   ```
-  To change settings later: edit the `Environment=` lines, then `sudo systemctl daemon-reload && sudo systemctl restart parlor`.
+  To change settings later: edit the `Environment=` lines, then `sudo systemctl daemon-reload && sudo systemctl restart gemma-realtime`.
 
 - **Security**: Keep port 8000 restricted to your IP (or add Nginx + HTTPS later — ping me).
 - **Stop saving money**: Just stop the EC2 instance when done (EBS volume keeps everything).

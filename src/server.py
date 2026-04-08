@@ -64,8 +64,12 @@ def resolve_model_path() -> str:
     if path:
         return path
     from huggingface_hub import hf_hub_download
+    cache_dir = os.environ.get("MODEL_DIR", "")
     print(f"Downloading {HF_REPO}/{HF_FILENAME} (first run only)...")
-    return hf_hub_download(repo_id=HF_REPO, filename=HF_FILENAME)
+    kwargs = {"repo_id": HF_REPO, "filename": HF_FILENAME}
+    if cache_dir:
+        kwargs["local_dir"] = cache_dir
+    return hf_hub_download(**kwargs)
 
 
 MODEL_PATH = resolve_model_path()
