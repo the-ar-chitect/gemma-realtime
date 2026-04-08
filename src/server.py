@@ -29,6 +29,10 @@ MAX_HISTORY_TURNS = int(os.environ.get("MAX_HISTORY_TURNS", "20"))
 # Number of concurrent sessions (each needs its own engine instance, ~2.6-3.7 GB VRAM).
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "1"))
 
+# Inference backend: "GPU" (fast, needs VRAM) or "CPU" (slower, no GPU needed).
+# "auto" will try GPU first and fall back to CPU on failure.
+BACKEND = os.environ.get("BACKEND", "auto").upper()
+
 # Context window (tokens). Gemma 4 E2B/E4B supports up to 128K.
 CONTEXT_WINDOW = int(os.environ.get("CONTEXT_WINDOW", "131072"))
 
@@ -94,16 +98,65 @@ SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
 engine_pool: asyncio.Queue = asyncio.Queue()
 active_sessions = 0  # track how many engines are currently checked-out
 tts_backend = None
+resolved_backend = BACKEND  # will be updated to "GPU" or "CPU" after detection
+
+
+def _has_real_gpu() -> bool:
+    """Check if a real (non-emulated) GPU is available."""
+    import subprocess
+    # Check for NVIDIA GPU
+    try:
+        result = subprocess.run(
+            ["nvidia-smi"], capture_output=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    # Check for any non-software GPU via Vulkan/OpenCL (covers AMD, Intel)
+    try:
+        result = subprocess.run(
+            ["vulkaninfo", "--summary"], capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and "llvmpipe" not in result.stdout.lower():
+            return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return False
+
+
+def _resolve_backend():
+    """Resolve the LiteRT-LM backend enum from the BACKEND env var."""
+    if BACKEND == "CPU":
+        print("Backend forced to CPU by BACKEND=CPU.")
+        return litert_lm.Backend.CPU
+    if BACKEND == "GPU":
+        print("Backend forced to GPU by BACKEND=GPU.")
+        return litert_lm.Backend.GPU
+    # "auto": detect real GPU hardware
+    if _has_real_gpu():
+        print("Real GPU detected, using GPU backend.")
+        return litert_lm.Backend.GPU
+    else:
+        print("No real GPU detected, using CPU backend.")
+        return litert_lm.Backend.CPU
 
 
 def load_models():
-    global tts_backend
+    global tts_backend, resolved_backend
+    hw_backend = _resolve_backend()
+    resolved_backend = hw_backend.name
+    # Audio backend is always CPU (model constraint).
+    # Vision backend follows the main backend.
+    vision_backend = hw_backend
+    print(f"Using backend: {hw_backend.name}")
     for i in range(MAX_SESSIONS):
         print(f"Loading engine {i+1}/{MAX_SESSIONS} from {MODEL_PATH}...")
         eng = litert_lm.Engine(
             MODEL_PATH,
-            backend=litert_lm.Backend.GPU,
-            vision_backend=litert_lm.Backend.GPU,
+            backend=hw_backend,
+            max_num_tokens=CONTEXT_WINDOW,
+            vision_backend=vision_backend,
             audio_backend=litert_lm.Backend.CPU,
         )
         eng.__enter__()
@@ -143,6 +196,7 @@ async def get_config():
         "available_sessions": engine_pool.qsize(),
         "model": HF_FILENAME,
         "model_variant": MODEL_VARIANT,
+        "backend": resolved_backend,
         "context_window": CONTEXT_WINDOW,
         "enable_audio": ENABLE_AUDIO,
         "enable_video": ENABLE_VIDEO,

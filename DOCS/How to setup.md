@@ -27,6 +27,7 @@ All configuration is done via environment variables. Set them before launching t
 | Variable | Default | Description |
 |---|---|---|
 | `MODEL_VARIANT` | `E2B` | Model to use: `E2B` (2.6 GB, lighter) or `E4B` (3.65 GB, stronger). Both are multimodal. |
+| `BACKEND` | `auto` | Inference backend: `GPU` (fast, needs VRAM), `CPU` (slower, no GPU needed), or `auto` (tries GPU, falls back to CPU). |
 | `MAX_SESSIONS` | `1` | Number of concurrent engine instances (one per user). Each E2B costs ~2.6 GB VRAM, each E4B ~5.5 GB. |
 | `MAX_HISTORY_TURNS` | `20` | Number of conversation turns to keep in context. More turns = more memory. |
 | `CONTEXT_WINDOW` | `131072` | Context window size in tokens (max 131072 = 128K for both E2B and E4B). |
@@ -72,6 +73,12 @@ ENABLE_VIDEO=false ENABLE_CHAT=false uv run server.py
 
 # Multi-user (3 concurrent sessions with E2B)
 MAX_SESSIONS=3 uv run server.py
+
+# No GPU? Force CPU backend (slower but works anywhere)
+BACKEND=CPU uv run server.py
+
+# Auto-detect: tries GPU, falls back to CPU (default behavior)
+uv run server.py
 ```
 
 ---
